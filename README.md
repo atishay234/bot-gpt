@@ -160,6 +160,29 @@ Requests without a valid user context will be rejected.
 
 ---
 
+### 5️⃣ Create User (Temporary / Testing Only)
+
+**POST** `/users`
+
+This endpoint is provided **only to create temporary users for testing purposes**.  
+Authentication is assumed to be handled upstream and is intentionally out of scope.
+
+**Request Body**
+```json
+{
+  "name": "Atishay Jain"
+}
+```
+
+**Response**
+```json
+{
+  "userId": "1234"
+}
+```
+
+---
+
 ## 🧠 Context & Cost Management
 
 - Only the most recent **N messages** are sent to the LLM (sliding window)
