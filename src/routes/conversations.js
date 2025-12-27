@@ -1,0 +1,71 @@
+const express = require("express");
+const router = express.Router();
+
+const resolveUser = require("../middlewares/resolveUser");
+const conversationService = require("../services/conversation.service");
+
+router.use(resolveUser);
+
+router.post("/", async (req, res) => {
+  const { firstMessage } = req.body;
+
+  if (!firstMessage) {
+    return res.status(400).json({ error: "firstMessage is required" });
+  }
+
+  try {
+    const result = await conversationService.createConversation(
+      req.user._id,
+      firstMessage
+    );
+
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/:id/messages", async (req, res) => {
+  const { message } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: "message is required" });
+  }
+
+  try {
+    const result = await conversationService.addMessage(
+      req.user._id,
+      req.params.id,
+      message
+    );
+
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+router.get("/", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+
+  const result = await conversationService.listConversations(
+    req.user._id,
+    page,
+    limit
+  );
+
+  res.status(200).json(result);
+});
+
+router.delete("/:id", async (req, res) => {
+  try {
+    await conversationService.deleteConversation(req.user._id, req.params.id);
+
+    res.status(200).json({ message: "Conversation deleted" });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+module.exports = router;
