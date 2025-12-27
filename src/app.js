@@ -1,8 +1,9 @@
 const express = require("express");
 require("dotenv").config();
+const conversationRoutes = require("./controllers/conversation.controller");
+const userRoutes = require("./controllers/user.controller");
 
 const connectDB = require("./config/db");
-const conversationRoutes = require("./routes/conversations");
 
 const app = express();
 app.use(express.json());
@@ -14,6 +15,7 @@ app.get("/health", (req, res) => {
 });
 
 app.use("/conversations", conversationRoutes);
+app.use("/users", userRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
