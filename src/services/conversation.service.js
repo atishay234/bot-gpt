@@ -1,5 +1,7 @@
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const DocumentChunk = require("../models/DocumentChunk");
+const { uploadDocument } = require("./document.service");
 const { CONTEXT_LIMIT } = require("../config/constants");
 
 const { getLLMProvider } = require("./llm");
@@ -13,8 +15,17 @@ const llm = getLLMProvider();
 /**
  * Create a new conversation
  */
-async function createConversation(userId, firstMessage) {
+async function createConversation({ userId, firstMessage, documents }) {
   const conversation = await Conversation.create({ userId });
+
+  if (Array.isArray(documents) && documents.length > 0) {
+    for (const docText of documents) {
+      await uploadDocument({
+        conversationId: conversation._id,
+        text: docText,
+      });
+    }
+  }
 
   await Message.create({
     conversationId: conversation._id,
@@ -23,11 +34,29 @@ async function createConversation(userId, firstMessage) {
     isSummarized: false,
   });
 
-  const replyContext = buildReplyContext({
-    recentMessages: [{ role: "user", content: firstMessage }],
+  const documentChunks = await DocumentChunk.find({
+    conversationId: conversation._id,
   });
 
+  let replyContext;
+
+  if (documentChunks.length > 0) {
+    replyContext = buildReplyContext({
+      summary: null,
+      recentMessages: [{ role: "user", content: firstMessage }],
+      documents: documentChunks.map((d) => d.text),
+    });
+  } else {
+    replyContext = buildReplyContext({
+      recentMessages: [{ role: "user", content: firstMessage }],
+    });
+  }
+
   const reply = await llm.generateResponse(replyContext);
+
+  if (!reply || typeof reply !== "string" || reply.trim() === "") {
+    throw new Error("LLM returned empty reply");
+  }
 
   await Message.create({
     conversationId: conversation._id,
@@ -36,7 +65,10 @@ async function createConversation(userId, firstMessage) {
     isSummarized: false,
   });
 
-  return { conversationId: conversation._id, reply };
+  return {
+    conversationId: conversation._id,
+    reply,
+  };
 }
 
 /**
@@ -65,8 +97,6 @@ async function addMessage(userId, conversationId, message) {
       unsummarized.length - CONTEXT_LIMIT
     );
 
-    console.log(messagesToSummarize);
-
     const summaryContext = buildSummaryContext({
       summary: conversation.summary,
       messagesToSummarize,
@@ -83,7 +113,6 @@ async function addMessage(userId, conversationId, message) {
     );
   }
 
-  // 1. Save user message
   await Message.create({
     conversationId,
     role: "user",
@@ -91,18 +120,23 @@ async function addMessage(userId, conversationId, message) {
     isSummarized: false,
   });
 
-  const recentMessages = await Message.find({
-    conversationId,
-  })
+  const recentMessages = await Message.find({ conversationId })
     .sort({ createdAt: -1 })
     .limit(CONTEXT_LIMIT);
+
+  const documentChunks = await DocumentChunk.find({ conversationId });
 
   const replyContext = buildReplyContext({
     summary: conversation.summary,
     recentMessages: recentMessages.reverse(),
+    documents: documentChunks.map((d) => d.text),
   });
 
   const reply = await llm.generateResponse(replyContext);
+
+  if (!reply || typeof reply !== "string" || reply.trim() === "") {
+    throw new Error("LLM returned empty reply");
+  }
 
   await Message.create({
     conversationId,

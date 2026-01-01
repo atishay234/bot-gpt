@@ -1,8 +1,39 @@
 const SYSTEM_PROMPT = "You are a helpful assistant.";
 
-function buildReplyContext({ summary = "", recentMessages = [] }) {
-  const context = [{ role: "system", content: SYSTEM_PROMPT }];
+/**
+ * Build context for LLM reply
+ * Supports:
+ * - Open chat
+ * - Summary-aware chat
+ * - RAG (documents grounding)
+ */
+function buildReplyContext({
+  summary = "",
+  recentMessages = [],
+  documents = [],
+}) {
+  const context = [
+    {
+      role: "system",
+      content: SYSTEM_PROMPT,
+    },
+  ];
 
+  // 1. Inject grounding documents (RAG)
+  if (documents && documents.length > 0) {
+    context.push({
+      role: "system",
+      content:
+        "You are given the following reference documents.\n" +
+        "Use them as factual grounding when answering.\n" +
+        "If the answer is not present, say you don't know.\n\n" +
+        documents
+          .map((doc, idx) => `Document ${idx + 1}:\n${doc}`)
+          .join("\n\n"),
+    });
+  }
+
+  // 2. Inject conversation summary (memory)
   if (summary) {
     context.push({
       role: "system",
@@ -10,13 +41,21 @@ function buildReplyContext({ summary = "", recentMessages = [] }) {
     });
   }
 
+  // 3. Inject recent messages
   recentMessages.forEach((m) => {
-    context.push({ role: m.role, content: m.content });
+    context.push({
+      role: m.role,
+      content: m.content,
+    });
   });
 
   return context;
 }
 
+/**
+ * Build context for summarisation
+ * (unchanged)
+ */
 function buildSummaryContext({ summary = "", messagesToSummarize = [] }) {
   const context = [
     {
