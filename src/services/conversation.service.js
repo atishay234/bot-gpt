@@ -1,35 +1,72 @@
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const DocumentChunk = require("../models/DocumentChunk");
+const { uploadDocument } = require("./document.service");
+const { retrieveTopK } = require("./retriever.service");
 const { CONTEXT_LIMIT } = require("../config/constants");
 
 const { getLLMProvider } = require("./llm");
-const { buildContext } = require("./context-builder.service");
+const {
+  buildReplyContext,
+  buildSummaryContext,
+} = require("./context-builder.service");
 
 const llm = getLLMProvider();
 
-async function createConversation(userId, firstMessage) {
-  const conversation = await Conversation.create({
-    userId,
-  });
+/**
+ * Create a new conversation
+ * Supports:
+ * - Open chat
+ * - RAG-first chat (documents + firstMessage)
+ */
+async function createConversation({ userId, firstMessage, documents }) {
+  const conversation = await Conversation.create({ userId });
+
+  if (Array.isArray(documents) && documents.length > 0) {
+    for (const docText of documents) {
+      await uploadDocument({
+        conversationId: conversation._id,
+        text: docText,
+      });
+    }
+  }
 
   await Message.create({
     conversationId: conversation._id,
     role: "user",
     content: firstMessage,
+    isSummarized: false,
   });
 
-  const history = await Message.find({ conversationId: conversation._id })
-    .sort({ createdAt: -1 })
-    .limit(CONTEXT_LIMIT);
+  const documentChunks = await DocumentChunk.find({
+    conversationId: conversation._id,
+  });
 
-  const context = buildContext(history.reverse());
+  const relevantDocs =
+    documentChunks.length > 0
+      ? await retrieveTopK({
+          query: firstMessage,
+          chunks: documentChunks,
+          k: 5,
+        })
+      : [];
 
-  const reply = await llm.generateResponse(context);
+  const replyContext = buildReplyContext({
+    recentMessages: [{ role: "user", content: firstMessage }],
+    documents: relevantDocs,
+  });
+
+  const reply = await llm.generateResponse(replyContext);
+
+  if (!reply || typeof reply !== "string" || reply.trim() === "") {
+    throw new Error("LLM returned empty reply");
+  }
 
   await Message.create({
     conversationId: conversation._id,
     role: "assistant",
     content: reply,
+    isSummarized: false,
   });
 
   return {
@@ -38,10 +75,12 @@ async function createConversation(userId, firstMessage) {
   };
 }
 
-async function addMessage(userId, conversationId, message) {
+/**
+ * Add message + boundary summarisation + RAG
+ */
+async function addMessage(conversationId, message, documents) {
   const conversation = await Conversation.findOne({
     _id: conversationId,
-    userId,
   });
 
   if (!conversation) {
@@ -50,24 +89,81 @@ async function addMessage(userId, conversationId, message) {
     throw error;
   }
 
+  if (Array.isArray(documents) && documents.length > 0) {
+    for (const docText of documents) {
+      await uploadDocument({
+        conversationId: conversationId,
+        text: docText,
+      });
+    }
+  }
+
+  const unsummarized = await Message.find({
+    conversationId,
+    isSummarized: false,
+  }).sort({ createdAt: 1 });
+
+  if (unsummarized.length >= CONTEXT_LIMIT) {
+    const messagesToSummarize = unsummarized.slice(
+      0,
+      unsummarized.length - CONTEXT_LIMIT
+    );
+
+    const summaryContext = buildSummaryContext({
+      summary: conversation.summary,
+      messagesToSummarize,
+    });
+
+    const updatedSummary = await llm.generateResponse(summaryContext);
+
+    conversation.summary = updatedSummary;
+    await conversation.save();
+
+    await Message.updateMany(
+      { _id: { $in: messagesToSummarize.map((m) => m._id) } },
+      { $set: { isSummarized: true } }
+    );
+  }
+
   await Message.create({
-    conversationId: conversation._id,
+    conversationId,
     role: "user",
     content: message,
+    isSummarized: false,
   });
 
-  const history = await Message.find({ conversationId: conversation._id })
+  const recentMessages = await Message.find({ conversationId })
     .sort({ createdAt: -1 })
     .limit(CONTEXT_LIMIT);
 
-  const context = buildContext(history.reverse());
+  const documentChunks = await DocumentChunk.find({ conversationId });
 
-  const reply = await llm.generateResponse(context);
+  const relevantDocs =
+    documentChunks.length > 0
+      ? await retrieveTopK({
+          query: message,
+          chunks: documentChunks,
+          k: 5,
+        })
+      : [];
+
+  const replyContext = buildReplyContext({
+    summary: conversation.summary,
+    recentMessages: recentMessages.reverse(),
+    documents: relevantDocs,
+  });
+
+  const reply = await llm.generateResponse(replyContext);
+
+  if (!reply || typeof reply !== "string" || reply.trim() === "") {
+    throw new Error("LLM returned empty reply");
+  }
 
   await Message.create({
-    conversationId: conversation._id,
+    conversationId,
     role: "assistant",
     content: reply,
+    isSummarized: false,
   });
 
   return { reply };
@@ -83,12 +179,7 @@ async function listConversations(userId, page, limit) {
 
   const total = await Conversation.countDocuments({ userId });
 
-  return {
-    page,
-    limit,
-    total,
-    conversations,
-  };
+  return { page, limit, total, conversations };
 }
 
 async function deleteConversation(userId, conversationId) {
@@ -103,8 +194,8 @@ async function deleteConversation(userId, conversationId) {
     throw error;
   }
 
-  await Message.deleteMany({ conversationId: conversation._id });
-  await Conversation.deleteOne({ _id: conversation._id });
+  await Message.deleteMany({ conversationId });
+  await Conversation.deleteOne({ _id: conversationId });
 }
 
 module.exports = {

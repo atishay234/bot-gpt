@@ -8,14 +8,16 @@ This project demonstrates backend architecture, REST API design, conversation ma
 
 ## 🚀 Features
 
-- Open Chat mode (multi-turn conversations)
-- LLM integration via Groq (Llama models)
-- Server-side conversation history management
+- Multi-turn conversational chat (Open Chat)
+- Retrieval-Augmented Generation (RAG) support
+- Conversation-scoped document grounding
+- Rolling, boundary-based conversation summarization
 - Sliding window context strategy
-- Single LLM call per message for cost optimization
+- Cost-aware LLM usage with controlled calls
 - User-scoped conversations via middleware
-- MongoDB persistence
+- MongoDB persistence (messages, summaries, documents)
 - Provider-agnostic LLM service design
+- Stateless REST APIs
 - Pagination for conversation listing
 
 > **Note:** Authentication is assumed to be handled upstream and is intentionally out of scope.  
@@ -25,10 +27,11 @@ This project demonstrates backend architecture, REST API design, conversation ma
 
 ## 🧱 Tech Stack
 
-- Node.js + Express  
-- MongoDB (Mongoose)  
-- Groq API (Llama models)  
-- JavaScript (no TypeScript)  
+- Node.js + Express
+- MongoDB (Mongoose)
+- Groq API (Llama models)
+- Ollama (local) – Embedding generation
+- JavaScript (no TypeScript)
 
 ---
 
@@ -56,6 +59,8 @@ PORT=3000
 MONGO_URI=<your_mongodb_connection_string>
 GROQ_API_KEY=<your_groq_api_key>
 ```
+
+> **Note:** Ollama must be running locally for embedding generation when using RAG.
 
 ### 4. Start the server
 
@@ -85,18 +90,28 @@ Requests without a valid user context will be rejected.
 
 ## 📡 API Usage
 
-### 1️⃣ Create a New Conversation
+### 1️⃣ Create a New Conversation (Open or RAG)
+
+## a. Creates a new conversation.
+
+## b. If documents are provided, the conversation starts in RAG mode.
 
 **POST** `/conversations`
 
 **Request Body**
+
 ```json
 {
-  "firstMessage": "Hello, how does Node.js work?"
+  "firstMessage": "Hello, how does Node.js work?",
+  "documents": [
+    "Node.js uses an event-driven, non-blocking I/O model.",
+    "The event loop handles asynchronous callbacks."
+  ]
 }
 ```
 
 **Response**
+
 ```json
 {
   "conversationId": "64f8...",
@@ -111,16 +126,21 @@ Requests without a valid user context will be rejected.
 **POST** `/conversations/:id/messages`
 
 **Request Body**
+
 ```json
 {
-  "message": "Can you explain the event loop?"
+  "message": "Can you explain how timers work?",
+  "documents": [
+    "Timers in Node.js are handled by the timers phase of the event loop."
+  ]
 }
 ```
 
 **Response**
+
 ```json
 {
-  "reply": "The Node.js event loop is responsible for..."
+  "reply": "Timers are processed in the timers phase of the event loop..."
 }
 ```
 
@@ -131,6 +151,7 @@ Requests without a valid user context will be rejected.
 **GET** `/conversations?page=1&limit=10`
 
 **Response**
+
 ```json
 {
   "page": 1,
@@ -152,6 +173,7 @@ Requests without a valid user context will be rejected.
 **DELETE** `/conversations/:id`
 
 **Response**
+
 ```json
 {
   "message": "Conversation deleted"
@@ -168,6 +190,7 @@ This endpoint is provided **only to create temporary users for testing purposes*
 Authentication is assumed to be handled upstream and is intentionally out of scope.
 
 **Request Body**
+
 ```json
 {
   "name": "Atishay Jain"
@@ -175,6 +198,7 @@ Authentication is assumed to be handled upstream and is intentionally out of sco
 ```
 
 **Response**
+
 ```json
 {
   "userId": "1234"
@@ -185,29 +209,36 @@ Authentication is assumed to be handled upstream and is intentionally out of sco
 
 ## 🧠 Context & Cost Management
 
-- Only the most recent **N messages** are sent to the LLM (sliding window)
-- Older messages can be summarized (design-supported)
-- **Single LLM API call per user message** to minimize cost and latency
-- System prompts are reused across requests
+-Context is dynamically constructed per request using:
+
+     -System prompt
+     -Conversation summary (optional)
+     -Recent messages (sliding window)
+     -Retrieved document chunks (RAG, optional)
+
+-Sliding window limits recent messages sent to the LLM
+-Boundary-based summarization compresses older conversation history
+-Messages are summarized once and never reprocessed
+-Summaries are persisted at the conversation level
+-LLM calls are minimized and predictable
+-Reply generation and summarization are intentionally separated to avoid hallucinations
 
 ---
 
-## 📦 RAG Support (Design Only)
+## 📦 RAG (Retrieval-Augmented Generation)
 
-The system is designed to support **Retrieval-Augmented Generation (RAG)** by injecting retrieved documents into the LLM context.
-
-The following are intentionally **out of scope** for this submission:
-
-- Document ingestion
-- Embedding generation
-- Vector database integration
-- Fine-tuning or model training
+-Documents are scoped per conversation
+-Documents are chunked and embedded using Ollama (local embeddings)
+-Top-K relevant chunks are retrieved via vector similarity
+-Retrieved chunks are injected into LLM context
+-RAG is enabled automatically when documents are provided
 
 ---
 
 ## 🧪 Testing
 
 APIs can be tested using:
+
 - Postman
 - curl
 - REST Client extensions
@@ -235,10 +266,12 @@ curl -X POST http://localhost:3000/conversations \
 
 This repository includes:
 
-- Backend implementation
-- REST APIs
-- Conversation & message persistence
-- LLM integration
-- Cost-aware context management
+-Backend implementation
+-REST APIs
+-Conversation & message persistence
+-Rolling summary mechanism
+-RAG integration with embeddings
+-Cost-aware LLM context management
+-Scalable and extensible service design
 
 Design documentation and future extensions are provided separately.
