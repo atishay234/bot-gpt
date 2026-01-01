@@ -19,7 +19,6 @@ function buildReplyContext({
     },
   ];
 
-  // 1. Inject grounding documents (RAG)
   if (documents && documents.length > 0) {
     context.push({
       role: "system",
@@ -33,7 +32,6 @@ function buildReplyContext({
     });
   }
 
-  // 2. Inject conversation summary (memory)
   if (summary) {
     context.push({
       role: "system",
@@ -41,7 +39,6 @@ function buildReplyContext({
     });
   }
 
-  // 3. Inject recent messages
   recentMessages.forEach((m) => {
     context.push({
       role: m.role,
@@ -54,7 +51,6 @@ function buildReplyContext({
 
 /**
  * Build context for summarisation
- * (unchanged)
  */
 function buildSummaryContext({ summary = "", messagesToSummarize = [] }) {
   const context = [
