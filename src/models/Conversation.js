@@ -9,6 +9,10 @@ const conversationSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    summary: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );

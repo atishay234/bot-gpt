@@ -3,41 +3,45 @@ const Message = require("../models/Message");
 const { CONTEXT_LIMIT } = require("../config/constants");
 
 const { getLLMProvider } = require("./llm");
-const { buildContext } = require("./context-builder.service");
+const {
+  buildReplyContext,
+  buildSummaryContext,
+} = require("./context-builder.service");
 
 const llm = getLLMProvider();
 
+/**
+ * Create a new conversation
+ */
 async function createConversation(userId, firstMessage) {
-  const conversation = await Conversation.create({
-    userId,
-  });
+  const conversation = await Conversation.create({ userId });
 
   await Message.create({
     conversationId: conversation._id,
     role: "user",
     content: firstMessage,
+    isSummarized: false,
   });
 
-  const history = await Message.find({ conversationId: conversation._id })
-    .sort({ createdAt: -1 })
-    .limit(CONTEXT_LIMIT);
+  const replyContext = buildReplyContext({
+    recentMessages: [{ role: "user", content: firstMessage }],
+  });
 
-  const context = buildContext(history.reverse());
-
-  const reply = await llm.generateResponse(context);
+  const reply = await llm.generateResponse(replyContext);
 
   await Message.create({
     conversationId: conversation._id,
     role: "assistant",
     content: reply,
+    isSummarized: false,
   });
 
-  return {
-    conversationId: conversation._id,
-    reply,
-  };
+  return { conversationId: conversation._id, reply };
 }
 
+/**
+ * Add message + boundary summarisation
+ */
 async function addMessage(userId, conversationId, message) {
   const conversation = await Conversation.findOne({
     _id: conversationId,
@@ -50,24 +54,61 @@ async function addMessage(userId, conversationId, message) {
     throw error;
   }
 
+  const unsummarized = await Message.find({
+    conversationId,
+    isSummarized: false,
+  }).sort({ createdAt: 1 });
+
+  if (unsummarized.length > CONTEXT_LIMIT) {
+    const messagesToSummarize = unsummarized.slice(
+      0,
+      unsummarized.length - CONTEXT_LIMIT
+    );
+
+    console.log(messagesToSummarize);
+
+    const summaryContext = buildSummaryContext({
+      summary: conversation.summary,
+      messagesToSummarize,
+    });
+
+    const updatedSummary = await llm.generateResponse(summaryContext);
+
+    conversation.summary = updatedSummary;
+    await conversation.save();
+
+    await Message.updateMany(
+      { _id: { $in: messagesToSummarize.map((m) => m._id) } },
+      { $set: { isSummarized: true } }
+    );
+  }
+
+  // 1. Save user message
   await Message.create({
-    conversationId: conversation._id,
+    conversationId,
     role: "user",
     content: message,
+    isSummarized: false,
   });
 
-  const history = await Message.find({ conversationId: conversation._id })
+  const recentMessages = await Message.find({
+    conversationId,
+  })
     .sort({ createdAt: -1 })
     .limit(CONTEXT_LIMIT);
 
-  const context = buildContext(history.reverse());
+  const replyContext = buildReplyContext({
+    summary: conversation.summary,
+    recentMessages: recentMessages.reverse(),
+  });
 
-  const reply = await llm.generateResponse(context);
+  const reply = await llm.generateResponse(replyContext);
 
   await Message.create({
-    conversationId: conversation._id,
+    conversationId,
     role: "assistant",
     content: reply,
+    isSummarized: false,
   });
 
   return { reply };
@@ -83,12 +124,7 @@ async function listConversations(userId, page, limit) {
 
   const total = await Conversation.countDocuments({ userId });
 
-  return {
-    page,
-    limit,
-    total,
-    conversations,
-  };
+  return { page, limit, total, conversations };
 }
 
 async function deleteConversation(userId, conversationId) {
@@ -103,8 +139,8 @@ async function deleteConversation(userId, conversationId) {
     throw error;
   }
 
-  await Message.deleteMany({ conversationId: conversation._id });
-  await Conversation.deleteOne({ _id: conversation._id });
+  await Message.deleteMany({ conversationId });
+  await Conversation.deleteOne({ _id: conversationId });
 }
 
 module.exports = {
