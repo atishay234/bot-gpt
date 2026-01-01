@@ -1,4 +1,4 @@
-const { embedText } = require("../embeddings/ollama.embedder");
+const { embedText } = require("./embeddings/ollama.embedder");
 
 /**
  * Compute cosine similarity between two vectors
@@ -33,19 +33,15 @@ async function retrieveTopK({ query, chunks, k = 5 }) {
     return [];
   }
 
-  // 1. Embed query
   const queryEmbedding = await embedText(query);
 
-  // 2. Score all chunks
   const scored = chunks.map((chunk) => ({
     text: chunk.text,
     score: cosineSimilarity(queryEmbedding, chunk.embedding),
   }));
 
-  // 3. Sort by relevance
   scored.sort((a, b) => b.score - a.score);
 
-  // 4. Pick top-K (ignore near-zero noise)
   return scored
     .filter((c) => c.score > 0.05)
     .slice(0, k)

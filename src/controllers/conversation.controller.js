@@ -42,17 +42,23 @@ router.post("/", async (req, res) => {
  * Add message to existing conversation (no documents here)
  */
 router.post("/:id/messages", async (req, res) => {
-  const { message } = req.body;
+  const { message, documents } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: "message is required" });
   }
 
+  if (documents && !Array.isArray(documents)) {
+    return res.status(400).json({
+      error: "documents must be an array of strings",
+    });
+  }
+
   try {
     const result = await conversationService.addMessage(
-      req.user._id,
       req.params.id,
-      message
+      message,
+      documents
     );
 
     res.status(200).json(result);
